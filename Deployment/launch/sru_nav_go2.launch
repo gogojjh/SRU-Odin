@@ -10,8 +10,28 @@
   <!-- ============================================================== -->
   <arg name="sim"               default="false" doc="Treat odom twist as already in base frame."/>
   <arg name="launch_joy"        default="true"  doc="Start a joy node alongside (PS5/PS4 etc.)."/>
-  <arg name="launch_static_tf"  default="true"  doc="Publish a static TF base_link->odin1_base_link."/>
+  <arg name="launch_static_tf"  default="false" doc="Publish a static TF base_link->odin1_base_link (OFF by default: sru_nav 不消费 TF, 且驱动实际只广播 odom->imu)。"/>
   <arg name="require_joystick"  default="true"  doc="If false, bypass the joystick deadman (TESTING ONLY)."/>
+
+  <!-- 目标点/速度指令话题名，默认跟 config/sru_nav.yaml 里写的一样（独立跑
+       纯 SRU 导航、直接控制 /cmd_vel 时用默认值）。2026-08-25 集成进 SnowNav
+       时踩过坑：SnowNav 的执行器（snownav_go2_executor.py）硬编码期望
+       /sru/goal_pose 和 /sru/cmd_vel（它要「独占」/cmd_vel 的发布权，自己
+       决定什么时候采纳 SRU 算出来的速度、什么时候不采纳——比如原地转向时
+       不能让 SRU 插手），如果 SRU 直接发到默认的 /goal_pose、/cmd_vel，
+       两边话题名对不上：执行器发的目标点 SRU 收不到、SRU 就算算出速度
+       执行器也收不到，MOVE_FORWARD 动作永远发不出真实前进速度，表现成
+       "狗一直原地打转、几乎不产生位移"且没有任何报错。SnowNav 那边起
+       这个 launch 时必须显式传 goal_topic:=/sru/goal_pose
+       cmd_vel_topic:=/sru/cmd_vel。 -->
+  <arg name="goal_topic"        default="/goal_pose"/>
+  <arg name="cmd_vel_topic"     default="/cmd_vel"/>
+
+  <!-- 🔴 sru_nav_node 的解释器必须显式指定。catkin 生成的中继脚本把 configure 时的
+       PYTHON_EXECUTABLE(本机是 /usr/bin/python3)写死进 shebang,而 onnxruntime/scipy/cv2
+       装在 conda sru_nav 环境里 —— 不覆盖就是 ModuleNotFoundError。先 conda activate
+       sru_nav 再 roslaunch,这里自动取 $CONDA_PREFIX;没激活 conda 时回落系统 python。 -->
+  <arg name="python_bin"        default="$(optenv CONDA_PREFIX /usr)/bin/python3"/>
 
   <!-- Odin1 mounting on Go2 (measure on the real platform!).
        xyz in meters (forward, left, up). rpy in radians.
@@ -33,8 +53,13 @@
   </node>
 
   <!-- ============================================================== -->
-  <!-- Static TF: Go2 base_link -> odin1_base_link                      -->
-  <!-- Adjust args on the real robot.                                   -->
+  <!-- Static TF: Go2 base_link -> odin1_base_link (默认关)             -->
+  <!-- 官方模板默认发 base_link->odin1_base_link, 但本部署的 odin_ros_driver -->
+  <!-- 实际只广播 odom->imu / odom->camera_0 / imu->lidar, 没有 odin1_base_link -->
+  <!-- 这个 frame。且 sru_nav_node 动态读 odom 的 child_frame_id(=imu), 根本不查 TF, -->
+  <!-- 这条静态 TF 无人消费, 指向不存在 frame 还会让 rviz/其它节点 lookup 报错。 -->
+  <!-- 若将来真需要(如 rviz 里显示 Odin1 在狗身上的外参), 手动 launch_static_tf:=true -->
+  <!-- 并把目标 frame 改成驱动实际有的(注意 base_link->imu 会和 odom->imu 双父冲突)。 -->
   <!-- ============================================================== -->
   <node if="$(arg launch_static_tf)"
         pkg="tf2_ros" type="static_transform_publisher"
@@ -47,9 +72,12 @@
   <!-- SRU navigation node                                              -->
   <!-- ============================================================== -->
   <node pkg="sru_nav_go2_ros1" type="sru_nav_node" name="sru_nav_node"
-        output="screen" required="true">
+        output="screen" required="true" launch-prefix="$(arg python_bin)">
     <rosparam command="load" file="$(find sru_nav_go2_ros1)/config/sru_nav.yaml"/>
     <param name="use_sim"          value="$(arg sim)"/>
     <param name="require_joystick" value="$(arg require_joystick)"/>
+    <!-- 放在 rosparam load 之后才能盖住 yaml 里写死的 /goal_pose、/cmd_vel -->
+    <param name="goal_topic"       value="$(arg goal_topic)"/>
+    <param name="cmd_vel_topic"    value="$(arg cmd_vel_topic)"/>
   </node>
 </launch>
