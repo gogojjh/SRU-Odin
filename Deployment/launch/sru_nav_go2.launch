@@ -10,7 +10,6 @@
   <!-- ============================================================== -->
   <arg name="sim"               default="false" doc="Treat odom twist as already in base frame."/>
   <arg name="launch_joy"        default="true"  doc="Start a joy node alongside (PS5/PS4 etc.)."/>
-  <arg name="launch_static_tf"  default="false" doc="Publish a static TF base_link->odin1_base_link (OFF by default: sru_nav 不消费 TF, 且驱动实际只广播 odom->imu)。"/>
   <arg name="require_joystick"  default="true"  doc="If false, bypass the joystick deadman (TESTING ONLY)."/>
 
   <!-- 目标点/速度指令话题名，默认跟 config/sru_nav.yaml 里写的一样（独立跑
@@ -26,6 +25,12 @@
        cmd_vel_topic:=/sru/cmd_vel。 -->
   <arg name="goal_topic"        default="/goal_pose"/>
   <arg name="cmd_vel_topic"     default="/cmd_vel"/>
+  <!-- 里程计话题。默认吃驱动原生的 odom 系那一路（单独跑纯 SRU 导航时用它）。
+       跟 SnowNav 集成时要换成 /habitat/odom_highfreq —— 那是桥接把同一份 400 Hz
+       数据换算到 world 系后转发的。sru_nav_node 拿 odom 消息的 header.frame_id
+       当自己的地图系，而 C++ 发的目标点是 world 系的，两边必须是同一个系；
+       混用的话目标点会系统性偏一个安装外参（15.8 厘米）且不报错。 -->
+  <arg name="odom_topic"        default="/odin1/odometry_highfreq"/>
 
   <!-- 🔴 sru_nav_node 的解释器必须显式指定。catkin 生成的中继脚本把 configure 时的
        PYTHON_EXECUTABLE(本机是 /usr/bin/python3)写死进 shebang,而 onnxruntime/scipy/cv2
@@ -33,16 +38,28 @@
        sru_nav 再 roslaunch,这里自动取 $CONDA_PREFIX;没激活 conda 时回落系统 python。 -->
   <arg name="python_bin"        default="$(optenv CONDA_PREFIX /usr)/bin/python3"/>
 
-  <!-- Odin1 mounting on Go2 (measure on the real platform!).
-       xyz in meters (forward, left, up). rpy in radians.
-       Default below: 25 cm forward of Go2 body center, 18 cm up, no roll/yaw,
-       ~20 deg downward pitch (matches original ZED X 0.349 rad config). -->
-  <arg name="odin1_x"     default="0.25"/>
-  <arg name="odin1_y"     default="0.0"/>
-  <arg name="odin1_z"     default="0.18"/>
-  <arg name="odin1_roll"  default="0.0"/>
-  <arg name="odin1_pitch" default="0.349"/>
-  <arg name="odin1_yaw"   default="0.0"/>
+  <!-- ============================================================== -->
+  <!-- Odin1 装在 Go2 上的外参(机体 -> Odin 的 IMU)                      -->
+  <!--                                                                  -->
+  <!-- 名词: base_link 是"机体", 原点在**地面上**、机器人正下方;         -->
+  <!--       imu 是 Odin1 内部的惯性单元, 也是 Odin 自己那套 odom 的原点  -->
+  <!--       所在(驱动发 odom->imu)。                                    -->
+  <!--                                                                  -->
+  <!-- odin_z=0.441 是**狗站立时** Odin 的 IMU 离地多高。Odin 的 odom     -->
+  <!-- 原点定在驱动启动那一刻 IMU 所在的高度, 所以驱动必须在狗站好之后    -->
+  <!-- 再起 —— 实测躺->站 z 会跳 0.237 m, 对不上的话地图整体偏这么多,     -->
+  <!-- 桌腿椅子垃圾桶全部漏检且什么都不报(桥接会就此打一条 warn)。        -->
+  <!--                                                                  -->
+  <!-- odin_pitch = -0.012462 rad = -0.714 度, 是 2026-08-28 实测值:      -->
+  <!-- 让狗四脚站在水平地面上, rostopic echo -n1 /odin1/odometry, 把四元数 -->
+  <!-- 转成俯仰角。连采 5 帧稳定到小数点后三位。支架动过就照这个方法重测。 -->
+  <!-- (旧文档里的 2 度、0.349 rad 都不是实测值, 前者是估的, 后者是从     -->
+  <!--  ZED X 相机配置继承下来的, 均已作废。)                            -->
+  <!-- ============================================================== -->
+  <arg name="odin_x"     default="0.1582"/>
+  <arg name="odin_y"     default="0.0"/>
+  <arg name="odin_z"     default="0.441"/>
+  <arg name="odin_pitch" default="-0.012462"/>
 
   <!-- ============================================================== -->
   <!-- Optional joy node                                                -->
@@ -53,20 +70,37 @@
   </node>
 
   <!-- ============================================================== -->
-  <!-- Static TF: Go2 base_link -> odin1_base_link (默认关)             -->
-  <!-- 官方模板默认发 base_link->odin1_base_link, 但本部署的 odin_ros_driver -->
-  <!-- 实际只广播 odom->imu / odom->camera_0 / imu->lidar, 没有 odin1_base_link -->
-  <!-- 这个 frame。且 sru_nav_node 动态读 odom 的 child_frame_id(=imu), 根本不查 TF, -->
-  <!-- 这条静态 TF 无人消费, 指向不存在 frame 还会让 rviz/其它节点 lookup 报错。 -->
-  <!-- 若将来真需要(如 rviz 里显示 Odin1 在狗身上的外参), 手动 launch_static_tf:=true -->
-  <!-- 并把目标 frame 改成驱动实际有的(注意 base_link->imu 会和 odom->imu 双父冲突)。 -->
+  <!-- 外参 TF 两条。static_transform_publisher 的角度参数顺序是          -->
+  <!-- x y z yaw pitch roll。                                            -->
+  <!--                                                                  -->
+  <!-- (1) world -> odom : **旋转必须是单位阵**。                        -->
+  <!--     2026-08-28 实测证明 Odin 的 odom 系是重力对齐的 —— 由         -->
+  <!--     /odin1/imu 的重力向量算出的倾角与 /odin1/odometry 报的姿态     -->
+  <!--     数值一致、符号相反(狗躺着 +4.80 vs -4.93 度; 站着 +0.58 vs     -->
+  <!--     -0.714 度)。也就是说安装倾角已经含在驱动发的 odom->imu 里了。  -->
+  <!--     而 world(地面上的机体系)也是水平的, 两个重力对齐的系只可能差   -->
+  <!--     一个平移加偏航。再往这里放俯仰就是把同一个倾角计两次,          -->
+  <!--     地板估计会系统性偏斜(4 米外差约 14 厘米)。                     -->
+  <!--                                                                  -->
+  <!-- (2) imu -> base_link : 安装倾角只出现在这一条里。                  -->
+  <!--     数值 = base_link->imu 取逆, 即 T(0.1582,0,0.441)*Ry(-0.714度)  -->
+  <!--     的逆。挂成 imu->base_link 而不是反过来, 是因为驱动已经在发      -->
+  <!--     odom->imu, 反挂会造成 imu 双父冲突。                          -->
+  <!--     平移是按 -R(pitch)^T * t 算出来的, 已验算级联回单位阵。改了     -->
+  <!--     上面的 odin_* 就要重算这三个数(tools 里没有现成脚本, 手算即可)。 -->
+  <!--                                                                  -->
+  <!-- 改完的 TF 树: world -> odom -> imu -> {lidar, base_link},         -->
+  <!--               旁支 odom -> camera_0 (后三条由驱动动态发)。         -->
   <!-- ============================================================== -->
-  <node if="$(arg launch_static_tf)"
-        pkg="tf2_ros" type="static_transform_publisher"
-        name="static_tf_base_to_odin1"
-        args="$(arg odin1_x) $(arg odin1_y) $(arg odin1_z)
-              $(arg odin1_yaw) $(arg odin1_pitch) $(arg odin1_roll)
-              base_link odin1_base_link"/>
+  <node pkg="tf2_ros" type="static_transform_publisher" name="world_to_odom"
+        args="$(arg odin_x) $(arg odin_y) $(arg odin_z) 0 0 0 world odom"/>
+
+  <node pkg="tf2_ros" type="static_transform_publisher" name="imu_to_base_link"
+        args="-0.163683 0.0 -0.438994 0 0.012462 0 imu base_link"/>
+
+  <!-- 相机内参(/odin1/camera_info)不在这里发 —— 那是 Odin1 自己的传感器信息,
+       跟着驱动一起起更合理(odin_ros_driver/launch_ROS1/odin1_ros1*.launch 里的
+       odin_camera_info_pub)。这样只跑驱动、不跑导航时也有内参。 -->
 
   <!-- ============================================================== -->
   <!-- SRU navigation node                                              -->
@@ -79,5 +113,6 @@
     <!-- 放在 rosparam load 之后才能盖住 yaml 里写死的 /goal_pose、/cmd_vel -->
     <param name="goal_topic"       value="$(arg goal_topic)"/>
     <param name="cmd_vel_topic"    value="$(arg cmd_vel_topic)"/>
+    <param name="odom_topic"       value="$(arg odom_topic)"/>
   </node>
 </launch>
