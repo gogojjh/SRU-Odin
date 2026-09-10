@@ -73,13 +73,25 @@ def main():
     control_frequency = rospy.get_param(
         '~control_frequency', constants.DEFAULT_CONTROL_FREQUENCY)
     policy_scale = rospy.get_param('~policy_scale', list(constants.POLICY_SCALE))
+    lateral_velocity_scale = rospy.get_param(
+        '~lateral_velocity_scale', constants.LATERAL_VELOCITY_SCALE)
+    low_pass_filter_coef = rospy.get_param(
+        '~low_pass_filter_coef', list(constants.LOW_PASS_FILTER_COEF))
+    arrive_goal_threshold = rospy.get_param(
+        '~arrive_goal_threshold', constants.ARRIVE_GOAL_THRESHOLD)
     use_sim = rospy.get_param('~use_sim', False)
     require_joystick = rospy.get_param('~require_joystick', True)
+    reset_hidden_on_goal_jump = rospy.get_param('~reset_hidden_on_goal_jump', True)
 
     if not isinstance(policy_scale, (list, tuple)) or len(policy_scale) != 3:
         rospy.logwarn('Invalid ~policy_scale, falling back to {}'.format(
             list(constants.POLICY_SCALE)))
         policy_scale = list(constants.POLICY_SCALE)
+
+    if not isinstance(low_pass_filter_coef, (list, tuple)) or len(low_pass_filter_coef) != 3:
+        rospy.logwarn('Invalid ~low_pass_filter_coef, falling back to {}'.format(
+            list(constants.LOW_PASS_FILTER_COEF)))
+        low_pass_filter_coef = list(constants.LOW_PASS_FILTER_COEF)
 
     NavigationPolicyNode(
         preprocess_model_path=vae_model_path,
@@ -93,6 +105,10 @@ def main():
         max_depth=max_depth,
         control_frequency=control_frequency,
         policy_scale=policy_scale,
+        lateral_velocity_scale=lateral_velocity_scale,
+        low_pass_filter_coef=low_pass_filter_coef,
+        arrive_goal_threshold=arrive_goal_threshold,
+        reset_hidden_on_goal_jump=reset_hidden_on_goal_jump,
         use_sim=use_sim,
         require_joystick=require_joystick,
     )

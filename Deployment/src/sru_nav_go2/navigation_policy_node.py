@@ -50,8 +50,12 @@ class NavigationPolicyNode(object):
                  max_depth=constants.DEFAULT_MAX_DEPTH,
                  control_frequency=constants.DEFAULT_CONTROL_FREQUENCY,
                  policy_scale=None,
+                 lateral_velocity_scale=constants.LATERAL_VELOCITY_SCALE,
+                 low_pass_filter_coef=None,
+                 arrive_goal_threshold=constants.ARRIVE_GOAL_THRESHOLD,
                  use_sim=False,
-                 require_joystick=True):
+                 require_joystick=True,
+                 reset_hidden_on_goal_jump=True):
         # Configuration
         self.use_sim = use_sim
         self.require_joystick = bool(require_joystick)
@@ -59,7 +63,12 @@ class NavigationPolicyNode(object):
         self.max_depth = float(max_depth)
         self.control_frequency = float(control_frequency)
         self.odom_ready = False
-        self.arrive_goal_threshold = constants.ARRIVE_GOAL_THRESHOLD
+        self.arrive_goal_threshold = float(arrive_goal_threshold)
+        self.reset_hidden_on_goal_jump = bool(reset_hidden_on_goal_jump)
+        self.lateral_velocity_scale = float(lateral_velocity_scale)
+        self.low_pass_filter_coef = np.array(
+            low_pass_filter_coef if low_pass_filter_coef is not None
+            else constants.LOW_PASS_FILTER_COEF)
         self.last_run_time = 0.0
         self.system_delay = constants.JOYSTICK_TIMEOUT
 
@@ -229,9 +238,14 @@ class NavigationPolicyNode(object):
             rospy.logerr('Error converting depth image: {}'.format(e))
             return
 
-        # Respect control frequency
+        # Respect control frequency. Depth frames arrive at ~10.3 Hz in
+        # practice (0.097 s/frame), so a strict >= interval gate rejects the
+        # 2-frame mark (0.194 s < 0.200 s) and waits for the 3-frame mark
+        # (0.291 s), silently dropping the real control rate to ~3.4 Hz.
+        # A half-frame tolerance lets the 2-frame mark through and restores
+        # the intended ~5 Hz.
         interval = 1.0 / self.control_frequency
-        if (self.robot_odom_time - self.last_run_time) < interval:
+        if (self.robot_odom_time - self.last_run_time) < interval * 0.9:
             return
         self.last_run_time = self.robot_odom_time
 
@@ -293,6 +307,23 @@ class NavigationPolicyNode(object):
                 self.is_reset_hidden_state,
             )
 
+            rospy.loginfo_throttle(
+                1.0,
+                'Inference latency: vae={:.1f}ms policy={:.1f}ms total={:.1f}ms '
+                '(budget={:.0f}ms)'.format(
+                    self.model.last_vae_ms, self.model.last_policy_ms,
+                    self.model.last_total_ms, 1000.0 / self.control_frequency))
+            # Budget is the full control period (e.g. 200ms @ 5Hz); inference
+            # alone eating more than 75% of it leaves little room for depth
+            # conversion/publish and risks the WebRTC bridge's watchdog_timeout
+            # (0.5s) if a couple of steps stack up.
+            if self.model.last_total_ms > 0.75 * 1000.0 / self.control_frequency:
+                rospy.logwarn_throttle(
+                    5.0,
+                    'Inference latency {:.1f}ms is eating most of the '
+                    '{:.0f}ms control period.'.format(
+                        self.model.last_total_ms, 1000.0 / self.control_frequency))
+
             if self.is_reset_hidden_state:
                 rospy.logwarn('\033[93mResetting hidden state.\033[0m')
                 self.is_reset_hidden_state = False
@@ -303,10 +334,10 @@ class NavigationPolicyNode(object):
             twist = Twist()
             model_cmd = np.array([
                 cmd[0].item() * self.cmd_vel_ratio,
-                cmd[1].item() * self.cmd_vel_ratio * constants.LATERAL_VELOCITY_SCALE,
+                cmd[1].item() * self.cmd_vel_ratio * self.lateral_velocity_scale,
                 cmd[2].item() * self.cmd_vel_ratio,
             ])
-            filter_coef = np.array(constants.LOW_PASS_FILTER_COEF)
+            filter_coef = self.low_pass_filter_coef
             filt_model = filter_coef * model_cmd + (1 - filter_coef) * self.prev_cmd
             twist.linear.x = float(filt_model[0]) + self.joy_linear_x
             twist.linear.y = float(filt_model[1]) + self.joy_linear_y
@@ -660,7 +691,35 @@ class NavigationPolicyNode(object):
             else:
                 rospy.logwarn('Robot position not available, using received z for target.')
 
-        self.target_pos_w = [msg.pose.position.x, msg.pose.position.y, goal_z]
+        new_target = [msg.pose.position.x, msg.pose.position.y, goal_z]
+
+        # A goal that jumps far from the previous one (e.g. SnowNav
+        # re-anchoring its lookahead point after the robot turns) would
+        # otherwise be chased with a stale LSTM hidden state and a stale
+        # low-pass filter history left over from the old goal, producing an
+        # overshoot -> correction -> overshoot oscillation on the yaw axis.
+        # Resetting on a large jump lets the policy start the new leg clean.
+        #
+        # 2026-08-27: disabled by default on the real robot
+        # (reset_hidden_on_goal_jump=False in sru_nav.yaml). Once the C++
+        # planner publishes its real navigation target continuously, the goal
+        # moving is *information* -- the frontier map changed, so the target
+        # should follow -- not a glitch to recover from. Wiping the hidden
+        # state every time it moves would keep the LSTM permanently cold,
+        # degrading the policy to a single-frame reactive controller and
+        # also zeroing the cmd_vel low-pass history (see _reset_last_action),
+        # which breaks the very smoothness continuous control is after.
+        # Kept behind a flag so the old behaviour is one param away.
+        if self.reset_hidden_on_goal_jump and self.target_pos_w is not None:
+            jump_dist = np.linalg.norm(
+                np.array(new_target[:2]) - np.array(self.target_pos_w[:2]))
+            if jump_dist > constants.GOAL_JUMP_RESET_DISTANCE:
+                rospy.logwarn(
+                    'Goal jumped {:.2f} m from previous target; resetting '
+                    'hidden state and cmd_vel filter.'.format(jump_dist))
+                self.is_reset_hidden_state = True
+
+        self.target_pos_w = new_target
         self.last_target_pos = list(self.target_pos_w)
 
         rospy.loginfo('Received target position: {}'.format(self.target_pos_w))

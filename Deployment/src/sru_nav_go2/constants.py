@@ -14,16 +14,27 @@ DEFAULT_MAX_DEPTH = 10.0               # meters
 ARRIVE_GOAL_THRESHOLD = 0.75           # meters
 NEAR_GOAL_THRESHOLD_MULTIPLIER = 2.0
 JOYSTICK_TIMEOUT = 15.0                # seconds (safety deadman timeout)
+# If a new goal lands farther than this from the previous one (meters), the
+# LSTM hidden state and the cmd_vel low-pass filter are reset: without this,
+# a large goal jump (e.g. SnowNav re-anchoring the lookahead point after a
+# turn) gets chased with stale recurrent/filter state, producing an overshoot
+# -> correction -> overshoot oscillation on the yaw axis.
+GOAL_JUMP_RESET_DISTANCE = 1.0         # meters
 
 # ---------------------------------------------------------------------------
-# Policy output scaling. Original B2W used [1.5, 1.0, 1.0].
-# Go2 is conservative until verified safe in real hardware.
+# Policy output scaling. These are fallback defaults used only when the
+# matching ROS param (policy_scale / lateral_velocity_scale /
+# low_pass_filter_coef in sru_nav.yaml) is absent; the yaml values are what
+# actually run in deployment. Keep them in sync with sru_nav.yaml so any
+# launch path that skips the yaml doesn't silently regress the vx:omega
+# ratio (turning radius) back to the old, oscillation-prone values.
+# Original B2W training scale was [1.5, 1.0, 1.0].
 # ---------------------------------------------------------------------------
-POLICY_SCALE = [0.6, 0.3, 0.6]         # [linear_x, linear_y, angular_z]
-LATERAL_VELOCITY_SCALE = 0.6           # extra damping on linear_y
+POLICY_SCALE = [0.60, 0.27, 0.60]      # [linear_x, linear_y, angular_z]
+LATERAL_VELOCITY_SCALE = 1.0           # extra damping on linear_y
 
 # Low-pass filter coefficients (alpha): output = a*new + (1-a)*prev
-LOW_PASS_FILTER_COEF = [0.9, 0.5, 0.5]
+LOW_PASS_FILTER_COEF = [0.5, 0.5, 0.5]
 
 # ---------------------------------------------------------------------------
 # Joystick axis / button mappings (PS5-style, same as original)

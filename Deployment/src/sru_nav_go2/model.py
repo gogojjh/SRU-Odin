@@ -3,6 +3,8 @@
 Identical inference pipeline to the original ROS2 deployment. No ROS deps.
 """
 
+import time
+
 import cv2
 import numpy as np
 import onnxruntime as ort
@@ -60,6 +62,25 @@ class LearningModel:
 
         self.policy_input_names = {inp.name: inp for inp in self.policy_session.get_inputs()}
         self.policy_output_names = [out.name for out in self.policy_session.get_outputs()]
+
+        # ORT falls back to CPU silently if the requested EP can't load (e.g.
+        # a CPU-only onnxruntime wheel with no CUDA/TensorRT support compiled
+        # in) -- get_providers() reports what each session actually ended up
+        # running on, as opposed to what we *asked* for above.
+        self.active_preprocess_providers = self.preprocess_session.get_providers()
+        self.active_policy_providers = self.policy_session.get_providers()
+        if self.active_preprocess_providers[0] == 'CPUExecutionProvider':
+            print('\033[93m' + 'WARNING: preprocess (VAE) session running on CPU '
+                  '-- requested providers were {}'.format(providers) + '\033[0m')
+        if self.active_policy_providers[0] == 'CPUExecutionProvider':
+            print('\033[93m' + 'WARNING: policy (LSTM) session running on CPU '
+                  '-- requested providers were {}'.format(providers) + '\033[0m')
+
+        # Per-step latency, in milliseconds. Updated every predict() call so
+        # the ROS node can log/throttle without re-timing itself.
+        self.last_vae_ms = 0.0
+        self.last_policy_ms = 0.0
+        self.last_total_ms = 0.0
 
         self._h_state = np.zeros((1, 1, LSTM_HIDDEN_DIM), dtype=np.float32)
         self._c_state = np.zeros((1, 1, LSTM_HIDDEN_DIM), dtype=np.float32)
@@ -123,7 +144,9 @@ class LearningModel:
         if is_reset:
             self.reset_hidden_state()
 
+        step_start = time.perf_counter()
         depth_embedding = self.depth_preprocess(depth_image)
+        vae_done = time.perf_counter()
 
         target_pos_log, target_vec_b = self.normalize_target_position(
             target_pos_w, robot_pos_w, robot_orientation_w
@@ -145,6 +168,7 @@ class LearningModel:
                 'c_in': self._c_state,
             },
         )
+        policy_done = time.perf_counter()
 
         raw_action, h_out, c_out = outputs
         self._h_state = h_out
@@ -153,6 +177,10 @@ class LearningModel:
         cmd_vel = np.tanh(raw_action) * self._policy_scale
         cmd_vel = cmd_vel.squeeze(0)
         raw_action = raw_action.squeeze(0)
+
+        self.last_vae_ms = (vae_done - step_start) * 1000.0
+        self.last_policy_ms = (policy_done - vae_done) * 1000.0
+        self.last_total_ms = (policy_done - step_start) * 1000.0
 
         return cmd_vel, raw_action, target_vec_b
 
