@@ -2,6 +2,9 @@
 # -----------------------------------------------------------------------------
 # One-shot launcher for the SRU navigation node on Go2 NX.
 #
+# 生产链路用 robohike_ws/robots/go2/runtime/start_sru_nav.sh；本脚本仅用于
+# 脱离 robohike_ws 的独立移植/自测。
+#
 # Combines a conda python env (onnxruntime, scipy, ...) with the system
 # ROS Noetic installation (rospy, cv_bridge). The trick:
 #   1) source /opt/ros/noetic/setup.bash       -> ROS env
@@ -30,7 +33,6 @@ NODE_ONLY=0
 for arg in "$@"; do
   case "$arg" in
     --no-joy)         EXTRA_ARGS="$EXTRA_ARGS launch_joy:=false" ;;
-    --no-tf)          EXTRA_ARGS="$EXTRA_ARGS launch_static_tf:=false" ;;
     --no-deadman)     EXTRA_ARGS="$EXTRA_ARGS require_joystick:=false launch_joy:=false" ;;
     --node-only)      NODE_ONLY=1 ;;
     *) EXTRA_ARGS="$EXTRA_ARGS $arg" ;;

@@ -693,23 +693,10 @@ class NavigationPolicyNode(object):
 
         new_target = [msg.pose.position.x, msg.pose.position.y, goal_z]
 
-        # A goal that jumps far from the previous one (e.g. SnowNav
-        # re-anchoring its lookahead point after the robot turns) would
-        # otherwise be chased with a stale LSTM hidden state and a stale
-        # low-pass filter history left over from the old goal, producing an
-        # overshoot -> correction -> overshoot oscillation on the yaw axis.
-        # Resetting on a large jump lets the policy start the new leg clean.
-        #
-        # 2026-08-27: disabled by default on the real robot
-        # (reset_hidden_on_goal_jump=False in sru_nav.yaml). Once the C++
-        # planner publishes its real navigation target continuously, the goal
-        # moving is *information* -- the frontier map changed, so the target
-        # should follow -- not a glitch to recover from. Wiping the hidden
-        # state every time it moves would keep the LSTM permanently cold,
-        # degrading the policy to a single-frame reactive controller and
-        # also zeroing the cmd_vel low-pass history (see _reset_last_action),
-        # which breaks the very smoothness continuous control is after.
-        # Kept behind a flag so the old behaviour is one param away.
+        # Disabled by default on the real robot (reset_hidden_on_goal_jump=False
+        # in sru_nav.yaml); kept behind a flag for the old step-goal setup.
+        # Full rationale: see reset_hidden_on_goal_jump in
+        # Deployment/config/sru_nav.yaml.
         if self.reset_hidden_on_goal_jump and self.target_pos_w is not None:
             jump_dist = np.linalg.norm(
                 np.array(new_target[:2]) - np.array(self.target_pos_w[:2]))

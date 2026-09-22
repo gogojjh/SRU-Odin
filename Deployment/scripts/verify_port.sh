@@ -5,6 +5,9 @@
 # Run after generating (or updating) the package to confirm the port is
 # self-consistent and ready for hardware testing.
 #
+# 生产链路用 robohike_ws/robots/go2/runtime/start_sru_nav.sh；本脚本仅用于
+# 脱离 robohike_ws 的独立移植/自测。
+#
 # Usage:
 #   bash scripts/verify_port.sh                      # full check
 #   bash scripts/verify_port.sh --skip-roslaunch     # skip the live node test
@@ -254,7 +257,7 @@ else
   else
     LOG=$(mktemp)
     timeout 12 roslaunch sru_nav_go2_ros1 sru_nav_go2.launch \
-        launch_joy:=false launch_static_tf:=false \
+        launch_joy:=false \
         require_joystick:=false >"$LOG" 2>&1 &
     RPID=$!
     sleep 8

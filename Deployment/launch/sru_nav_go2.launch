@@ -13,16 +13,11 @@
   <arg name="require_joystick"  default="true"  doc="If false, bypass the joystick deadman (TESTING ONLY)."/>
 
   <!-- 目标点/速度指令话题名，默认跟 config/sru_nav.yaml 里写的一样（独立跑
-       纯 SRU 导航、直接控制 /cmd_vel 时用默认值）。2026-08-25 集成进 SnowNav
-       时踩过坑：SnowNav 的执行器（snownav_go2_executor.py）硬编码期望
-       /sru/goal_pose 和 /sru/cmd_vel（它要「独占」/cmd_vel 的发布权，自己
-       决定什么时候采纳 SRU 算出来的速度、什么时候不采纳——比如原地转向时
-       不能让 SRU 插手），如果 SRU 直接发到默认的 /goal_pose、/cmd_vel，
-       两边话题名对不上：执行器发的目标点 SRU 收不到、SRU 就算算出速度
-       执行器也收不到，MOVE_FORWARD 动作永远发不出真实前进速度，表现成
-       "狗一直原地打转、几乎不产生位移"且没有任何报错。SnowNav 那边起
-       这个 launch 时必须显式传 goal_topic:=/sru/goal_pose
-       cmd_vel_topic:=/sru/cmd_vel。 -->
+       纯 SRU 导航、直接控制 /cmd_vel 时用默认值）。给 SnowNav 当底座时必须
+       显式传 goal_topic:=/sru/goal_pose cmd_vel_topic:=/sru/cmd_vel，否则
+       SRU 会抢占默认的 /cmd_vel（SnowNav 执行器 snownav_go2_executor.py
+       要独占 /cmd_vel 的发布权，自己决定何时采纳 SRU 算出的速度），两边
+       话题对不上，表现为狗原地打转、几乎不产生位移，且不报任何错误。 -->
   <arg name="goal_topic"        default="/goal_pose"/>
   <arg name="cmd_vel_topic"     default="/cmd_vel"/>
   <!-- 里程计话题。默认吃驱动原生的 odom 系那一路（单独跑纯 SRU 导航时用它）。
@@ -50,9 +45,9 @@
   <!-- 再起 —— 实测躺->站 z 会跳 0.237 m, 对不上的话地图整体偏这么多,     -->
   <!-- 桌腿椅子垃圾桶全部漏检且什么都不报(桥接会就此打一条 warn)。        -->
   <!--                                                                  -->
-  <!-- odin_pitch = -0.012462 rad = -0.714 度, 是 2026-08-28 实测值:      -->
-  <!-- 让狗四脚站在水平地面上, rostopic echo -n1 /odin1/odometry, 把四元数 -->
-  <!-- 转成俯仰角。连采 5 帧稳定到小数点后三位。支架动过就照这个方法重测。 -->
+  <!-- odin_pitch = -0.012462 rad = -0.714 度, 是实测值: 让狗四脚站在      -->
+  <!-- 水平地面上, rostopic echo -n1 /odin1/odometry, 把四元数转成俯仰角。 -->
+  <!-- 连采 5 帧稳定到小数点后三位。支架动过就照这个方法重测。            -->
   <!-- (旧文档里的 2 度、0.349 rad 都不是实测值, 前者是估的, 后者是从     -->
   <!--  ZED X 相机配置继承下来的, 均已作废。)                            -->
   <!-- ============================================================== -->
@@ -74,7 +69,7 @@
   <!-- x y z yaw pitch roll。                                            -->
   <!--                                                                  -->
   <!-- (1) world -> odom : **旋转必须是单位阵**。                        -->
-  <!--     2026-08-28 实测证明 Odin 的 odom 系是重力对齐的 —— 由         -->
+  <!--     实测证明 Odin 的 odom 系是重力对齐的 —— 由                    -->
   <!--     /odin1/imu 的重力向量算出的倾角与 /odin1/odometry 报的姿态     -->
   <!--     数值一致、符号相反(狗躺着 +4.80 vs -4.93 度; 站着 +0.58 vs     -->
   <!--     -0.714 度)。也就是说安装倾角已经含在驱动发的 odom->imu 里了。  -->

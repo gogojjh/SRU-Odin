@@ -14,11 +14,9 @@ DEFAULT_MAX_DEPTH = 10.0               # meters
 ARRIVE_GOAL_THRESHOLD = 0.75           # meters
 NEAR_GOAL_THRESHOLD_MULTIPLIER = 2.0
 JOYSTICK_TIMEOUT = 15.0                # seconds (safety deadman timeout)
-# If a new goal lands farther than this from the previous one (meters), the
-# LSTM hidden state and the cmd_vel low-pass filter are reset: without this,
-# a large goal jump (e.g. SnowNav re-anchoring the lookahead point after a
-# turn) gets chased with stale recurrent/filter state, producing an overshoot
-# -> correction -> overshoot oscillation on the yaw axis.
+# Distance threshold (meters) for resetting the LSTM hidden state and the
+# cmd_vel low-pass filter on a large goal jump. See reset_hidden_on_goal_jump
+# in Deployment/config/sru_nav.yaml for the full rationale and current default.
 GOAL_JUMP_RESET_DISTANCE = 1.0         # meters
 
 # ---------------------------------------------------------------------------
