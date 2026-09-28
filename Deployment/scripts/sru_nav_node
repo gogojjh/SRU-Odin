@@ -51,7 +51,6 @@ def main():
     # --- Topics ---------------------------------------------------------
     depth_topic = rospy.get_param('~depth_topic', '/odin1/depth_img_competetion')
     odom_topic = rospy.get_param('~odom_topic', '/odin1/odometry_highfreq')
-    joy_topic = rospy.get_param('~joy_topic', '/joy')
     goal_topic = rospy.get_param('~goal_topic', '/goal_pose')
     cmd_vel_topic = rospy.get_param('~cmd_vel_topic', '/cmd_vel')
 
@@ -80,7 +79,6 @@ def main():
     arrive_goal_threshold = rospy.get_param(
         '~arrive_goal_threshold', constants.ARRIVE_GOAL_THRESHOLD)
     use_sim = rospy.get_param('~use_sim', False)
-    require_joystick = rospy.get_param('~require_joystick', True)
     reset_hidden_on_goal_jump = rospy.get_param('~reset_hidden_on_goal_jump', True)
 
     if not isinstance(policy_scale, (list, tuple)) or len(policy_scale) != 3:
@@ -98,7 +96,6 @@ def main():
         policy_model_path=policy_model_path,
         depth_topic=depth_topic,
         odom_topic=odom_topic,
-        joy_topic=joy_topic,
         goal_topic=goal_topic,
         cmd_vel_topic=cmd_vel_topic,
         min_depth=min_depth,
@@ -110,12 +107,9 @@ def main():
         arrive_goal_threshold=arrive_goal_threshold,
         reset_hidden_on_goal_jump=reset_hidden_on_goal_jump,
         use_sim=use_sim,
-        require_joystick=require_joystick,
     )
 
-    rospy.loginfo(
-        'SRU navigation node spinning (sim={}, require_joystick={}).'
-        .format(use_sim, require_joystick))
+    rospy.loginfo('SRU navigation node spinning (sim={}).'.format(use_sim))
     rospy.spin()
 
 

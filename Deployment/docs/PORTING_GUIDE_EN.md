@@ -128,6 +128,10 @@ and skip to §6.
 
 ### 3.4 Safety: dual-mode joystick deadman
 
+> Joystick logic has been moved out of this repo; see the `go2_joy_teleop`
+> package in the robohike repo (quadruped_workbench/go2_software/ros1/go2_joy_teleop).
+> The section below is a historical record and does not reflect the current implementation.
+
 | Mode | Trigger | Behavior |
 |---|---|---|
 | Default (`require_joystick=true`) | Real-robot deployment | `cmd_vel_ratio=0` until `/joy` is published with `axes[4]` > 0; >15 s without `/joy` forces stop |

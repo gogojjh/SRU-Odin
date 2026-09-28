@@ -132,9 +132,9 @@ section "2. YAML config — required parameters"
 
 YAML="${PKG_DIR}/config/sru_nav.yaml"
 if [ -f "$YAML" ]; then
-  for key in depth_topic odom_topic joy_topic goal_topic cmd_vel_topic \
+  for key in depth_topic odom_topic goal_topic cmd_vel_topic \
              min_depth max_depth control_frequency policy_scale \
-             use_sim require_joystick; do
+             use_sim; do
     if grep -E "^[[:space:]]*${key}[[:space:]]*:" "$YAML" >/dev/null; then
       ok "yaml has ${key}"
     else
@@ -155,7 +155,6 @@ if [ -f "$CONSTS" ]; then
     [DEFAULT_CONTROL_FREQUENCY]="5"
     [DEFAULT_MIN_DEPTH]="0.25"
     [DEFAULT_MAX_DEPTH]="10"
-    [JOYSTICK_TIMEOUT]="15"
   )
   for k in "${!want[@]}"; do
     if grep -E "^${k}\s*=\s*${want[$k]}" "$CONSTS" >/dev/null; then
@@ -180,8 +179,6 @@ if [ -f "$LAUNCH_SH" ]; then
                                      || fail "no PYTHONPATH injection"
   grep -q "conda activate" "$LAUNCH_SH" && ok "conda activate in launcher" \
                                         || fail "no conda activate"
-  grep -q -- "--no-deadman" "$LAUNCH_SH" && ok "--no-deadman bypass present" \
-                                         || warn "no --no-deadman flag"
 fi
 
 SETUP_SH="${PKG_DIR}/scripts/setup_conda_env.sh"
@@ -256,9 +253,7 @@ else
     fail "roslaunch not on PATH after sourcing"
   else
     LOG=$(mktemp)
-    timeout 12 roslaunch sru_nav_go2_ros1 sru_nav_go2.launch \
-        launch_joy:=false \
-        require_joystick:=false >"$LOG" 2>&1 &
+    timeout 12 roslaunch sru_nav_go2_ros1 sru_nav_go2.launch >"$LOG" 2>&1 &
     RPID=$!
     sleep 8
     if grep -q "Navigation policy node is ready" "$LOG"; then

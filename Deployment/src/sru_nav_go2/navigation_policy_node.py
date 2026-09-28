@@ -4,8 +4,6 @@ Direct port of the original ROS2 NavigationPolicyNode. Behaviour is preserved;
 only ROS API calls, time helpers, and topic defaults have been changed.
 """
 
-import time
-
 import cv2  # noqa: F401  (kept for parity; cv2 import inside model.py)
 import numpy as np
 import rospy
@@ -13,15 +11,12 @@ from cv_bridge import CvBridge
 from geometry_msgs.msg import PoseStamped, Twist
 from nav_msgs.msg import Odometry
 from scipy.spatial.transform import Rotation as R
-from sensor_msgs.msg import Image, Joy
-from std_msgs.msg import Header
+from sensor_msgs.msg import Image
 from visualization_msgs.msg import Marker
 
 from sru_nav_go2 import constants
 from sru_nav_go2.model import LearningModel
-from sru_nav_go2.utils import transform_points, yaw_quat
 from sru_nav_go2.visualization import VisualizationManager
-from sru_nav_go2.waypoint_manager import RospyLogger, WaypointManager
 
 
 # ---------------------------------------------------------------------------
@@ -43,7 +38,6 @@ class NavigationPolicyNode(object):
                  policy_model_path,
                  depth_topic,
                  odom_topic,
-                 joy_topic,
                  goal_topic,
                  cmd_vel_topic,
                  min_depth=constants.DEFAULT_MIN_DEPTH,
@@ -54,11 +48,9 @@ class NavigationPolicyNode(object):
                  low_pass_filter_coef=None,
                  arrive_goal_threshold=constants.ARRIVE_GOAL_THRESHOLD,
                  use_sim=False,
-                 require_joystick=True,
                  reset_hidden_on_goal_jump=True):
         # Configuration
         self.use_sim = use_sim
-        self.require_joystick = bool(require_joystick)
         self.min_depth = float(min_depth)
         self.max_depth = float(max_depth)
         self.control_frequency = float(control_frequency)
@@ -70,23 +62,17 @@ class NavigationPolicyNode(object):
             low_pass_filter_coef if low_pass_filter_coef is not None
             else constants.LOW_PASS_FILTER_COEF)
         self.last_run_time = 0.0
-        self.system_delay = constants.JOYSTICK_TIMEOUT
 
         # ----- Publishers ------------------------------------------------
         self.cmd_vel_publisher = rospy.Publisher(cmd_vel_topic, Twist, queue_size=10)
         self.base_vel_publisher = rospy.Publisher(
             '~base_vel', Twist, queue_size=10)
-        self.goal_pose_publisher = rospy.Publisher(goal_topic, PoseStamped, queue_size=1)
 
         # Visualization
         self.twist_marker_publisher = rospy.Publisher(
             '~vis/twist_cmd_marker', Marker, queue_size=10)
         self.goal_vector_marker_publisher = rospy.Publisher(
             '~vis/goal_vector_marker', Marker, queue_size=10)
-        self.moving_goal_marker_publisher = rospy.Publisher(
-            '~vis/moving_goal_marker', Marker, queue_size=10)
-        self.recorded_waypoints_marker_pub = rospy.Publisher(
-            '~vis/recorded_waypoints_marker', Marker, queue_size=10)
 
         # ----- Utilities --------------------------------------------------
         self.bridge = CvBridge()
@@ -95,8 +81,6 @@ class NavigationPolicyNode(object):
             policy_model_path=policy_model_path,
             policy_scale=policy_scale,
         )
-        self._logger = RospyLogger()
-        self.waypoint_manager = WaypointManager(self._logger)
         self.visualization_manager = VisualizationManager()
 
         # ----- Robot state -----------------------------------------------
@@ -120,45 +104,17 @@ class NavigationPolicyNode(object):
         self.prev_cmd = np.zeros(3)
         self.is_abort_goal = False
 
-        # ----- Joystick state --------------------------------------------
-        self.joy_linear_x = 0.0
-        self.joy_linear_y = 0.0
-        self.joy_angular_z = 0.0
-        # When require_joystick is False we want the robot to move at full
-        # policy scale even with no /joy publisher (testing / headless runs).
-        # When True (default, safe), ratio stays 0 until joy_callback fires.
-        self.cmd_vel_ratio = 0.0 if self.require_joystick else 1.0
-        self.joy_time = time.time()
-        self.last_trigger_time = time.time()
-
-        # ----- Moving goal state -----------------------------------------
-        self.moving_goal_delta = [0.0, 0.0, 0.0]
-
-        # ----- Smart joystick state --------------------------------------
-        self.smart_joystick_goal = [0.0, 0.0, 0.0]
-        self.prev_smart_joystick_goal = [0.0, 0.0, 0.0]
-        self.smart_joystick_mode_active = False
-        self.smart_joystick_goal_aborted = False
-        self.latest_joystick_axes = [0.0, 0.0, 0.0]
-
         # ----- Subscribers (created LAST so callbacks fire only after init)
         self.odom_subscriber = rospy.Subscriber(
             odom_topic, Odometry, self.odom_callback, queue_size=10)
         self.depth_subscriber = rospy.Subscriber(
             depth_topic, Image, self.depth_callback, queue_size=2)
-        self.joy_subscriber = rospy.Subscriber(
-            joy_topic, Joy, self.joy_callback, queue_size=10)
         self.target_position_subscriber = rospy.Subscriber(
             goal_topic, PoseStamped, self.target_position_callback, queue_size=1)
 
         # ----- Timers ----------------------------------------------------
-        rospy.Timer(rospy.Duration(constants.WAYPOINT_PUBLISH_INTERVAL),
-                    self._timer_publish_recorded_waypoints)
         rospy.Timer(rospy.Duration(constants.TARGET_VECTOR_PUBLISH_INTERVAL),
                     self._timer_publish_target_vector)
-        smart_joystick_interval = 1.0 / constants.SMART_JOYSTICK_UPDATE_FREQUENCY
-        rospy.Timer(rospy.Duration(smart_joystick_interval),
-                    self._timer_update_smart_joystick_goal)
 
         rospy.loginfo('\033[92mNavigation policy node is ready.\033[0m')
 
@@ -252,31 +208,13 @@ class NavigationPolicyNode(object):
         self.generate_cmd_vel()
 
     def generate_cmd_vel(self):
-        # Visualize moving goal
-        self.visualization_manager.publish_moving_goal_marker(
-            self.moving_goal_delta, self.robot_pos_w, self.robot_orientation_w,
-            self.robot_odom_time, self.map_frame_id, self.moving_goal_marker_publisher,
-        )
-
-        if self.smart_joystick_mode_active:
-            rospy.loginfo_throttle(
-                1.0,
-                'Smart joystick mode active - Goal: [{:.2f}, {:.2f}, {:.2f}]'.format(
-                    self.smart_joystick_goal[0], self.smart_joystick_goal[1],
-                    self.smart_joystick_goal[2],
-                ),
-            )
-
         is_arrived = self._check_goal_reached(self.target_pos_w, self.robot_pos_w)
         if is_arrived or self.is_abort_goal:
             twist = Twist()
-            twist.linear.x = 0.0 + self.joy_linear_x
-            twist.linear.y = 0.0 + self.joy_linear_y
-            twist.angular.z = 0.0 + self.joy_angular_z
+            twist.linear.x = 0.0
+            twist.linear.y = 0.0
+            twist.angular.z = 0.0
             self.cmd_vel_publisher.publish(twist)
-
-            if self.is_abort_goal:
-                self.waypoint_manager.re_add_aborted_waypoint(self.target_pos_w)
 
             self.target_pos_w = None
             self.is_abort_goal = False
@@ -284,22 +222,6 @@ class NavigationPolicyNode(object):
             rospy.loginfo('Target position reset.')
 
         else:
-            # Joystick deadman timeout (only when joystick is required)
-            if self.require_joystick and \
-                    (self.robot_odom_time - self.joy_time > self.system_delay):
-                self.cmd_vel_ratio = 0.0
-                diff = self.robot_odom_time - self.joy_time
-                rospy.logwarn_throttle(
-                    2.0,
-                    '\033[93mJoystick timeout, stopping the robot. Time diff: {:.4f}s\033[0m'
-                    .format(diff),
-                )
-
-            rospy.loginfo_throttle(
-                1.0,
-                'cmd_vel_ratio: {:.4f} (require_joystick={})'.format(
-                    self.cmd_vel_ratio, self.require_joystick))
-
             cmd, action, _target_vec_b = self.model.predict(
                 self.linear_vel, self.angular_vel, self.gravity_vector,
                 self.last_action, self.target_pos_w, self.robot_pos_w,
@@ -333,15 +255,15 @@ class NavigationPolicyNode(object):
 
             twist = Twist()
             model_cmd = np.array([
-                cmd[0].item() * self.cmd_vel_ratio,
-                cmd[1].item() * self.cmd_vel_ratio * self.lateral_velocity_scale,
-                cmd[2].item() * self.cmd_vel_ratio,
+                cmd[0].item(),
+                cmd[1].item() * self.lateral_velocity_scale,
+                cmd[2].item(),
             ])
             filter_coef = self.low_pass_filter_coef
             filt_model = filter_coef * model_cmd + (1 - filter_coef) * self.prev_cmd
-            twist.linear.x = float(filt_model[0]) + self.joy_linear_x
-            twist.linear.y = float(filt_model[1]) + self.joy_linear_y
-            twist.angular.z = float(filt_model[2]) + self.joy_angular_z
+            twist.linear.x = float(filt_model[0])
+            twist.linear.y = float(filt_model[1])
+            twist.angular.z = float(filt_model[2])
             self.prev_cmd = filt_model
             self.cmd_vel_publisher.publish(twist)
 
@@ -356,7 +278,6 @@ class NavigationPolicyNode(object):
                 twist.linear.x, twist.linear.y, twist.angular.z
             ),
         )
-        self._reset_joystick()
 
     # =====================================================================
     # Velocity / orientation helpers
@@ -388,243 +309,10 @@ class NavigationPolicyNode(object):
         return proj.tolist()
 
     # =====================================================================
-    # Joystick handling
-    # =====================================================================
-    def joy_callback(self, joy_msg):
-        if len(joy_msg.axes) <= max(
-                constants.JOYSTICK_AXIS_LINEAR_X,
-                constants.JOYSTICK_AXIS_LINEAR_Y,
-                constants.JOYSTICK_AXIS_LINEAR_Z,
-                constants.JOYSTICK_AXIS_ANGULAR_Z,
-                constants.JOYSTICK_AXIS_SMART,
-                4):
-            rospy.logwarn_throttle(5.0, 'Joy message has too few axes; ignoring.')
-            return
-
-        self.cmd_vel_ratio = (1.0 + joy_msg.axes[4]) * 1.0
-
-        if (len(joy_msg.buttons) > constants.BUTTON_ABORT and
-                joy_msg.buttons[constants.BUTTON_ABORT] == 1):
-            self.is_abort_goal = True
-            rospy.logwarn('Abort goal')
-
-        dx, dy, dz = self._moving_xyz_with_buttons(joy_msg, scale=constants.MOVING_SCALE)
-        self.moving_goal_delta[0] += dx
-        self.moving_goal_delta[1] += dy
-        self.moving_goal_delta[2] += dz
-
-        current_time = time.time()
-        cooldown = constants.TRIGGER_BUTTON_COOLDOWN
-
-        if (not self.is_abort_goal
-                and (current_time - self.last_trigger_time) > cooldown
-                and len(joy_msg.buttons) > constants.BUTTON_SEND_GOAL
-                and joy_msg.buttons[constants.BUTTON_SEND_GOAL] == 1):
-            rospy.logwarn('Trigger moving goal')
-            self._publish_moving_goal()
-            self.last_trigger_time = current_time
-
-        if ((current_time - self.last_trigger_time) > cooldown
-                and len(joy_msg.buttons) > constants.BUTTON_RECORD_WAYPOINT
-                and joy_msg.buttons[constants.BUTTON_RECORD_WAYPOINT] == 1):
-            self.waypoint_manager.record_waypoint(self.robot_pos_w)
-            self.last_trigger_time = current_time
-
-        if ((current_time - self.last_trigger_time) > cooldown
-                and len(joy_msg.buttons) > constants.BUTTON_CLEAR_WAYPOINT
-                and joy_msg.buttons[constants.BUTTON_CLEAR_WAYPOINT] == 1):
-            self.waypoint_manager.remove_last_waypoint()
-            self.last_trigger_time = current_time
-
-        if (not self.is_abort_goal
-                and (current_time - self.last_trigger_time) > cooldown
-                and len(joy_msg.buttons) > constants.BUTTON_TRIGGER_WAYPOINTS
-                and joy_msg.buttons[constants.BUTTON_TRIGGER_WAYPOINTS] == 1):
-            rospy.logwarn('Trigger waypoints')
-            if self.waypoint_manager.has_home_waypoints():
-                self.waypoint_manager.start_home_waypoint_sequence()
-            elif self.waypoint_manager.has_inversed_waypoints():
-                self.waypoint_manager.start_inversed_waypoint_sequence()
-            self.last_trigger_time = current_time
-
-        if joy_msg.axes[constants.JOYSTICK_AXIS_SMART] < -0.5:
-            if not self.smart_joystick_mode_active:
-                self.smart_joystick_mode_active = True
-                self.smart_joystick_goal_aborted = False
-
-            if not self.smart_joystick_goal_aborted and self.target_pos_w is not None:
-                self.is_abort_goal = True
-                self.smart_joystick_goal_aborted = True
-                rospy.loginfo('Smart joystick mode: aborting current navigation goal')
-
-            self.latest_joystick_axes = [
-                joy_msg.axes[constants.JOYSTICK_AXIS_LINEAR_X],
-                joy_msg.axes[constants.JOYSTICK_AXIS_LINEAR_Y],
-                joy_msg.axes[constants.JOYSTICK_AXIS_LINEAR_Z],
-            ]
-        else:
-            if self.smart_joystick_mode_active:
-                self.smart_joystick_mode_active = False
-                self.is_abort_goal = True
-                rospy.loginfo('Exiting smart joystick mode: aborting current navigation goal')
-
-            self._reset_smart_joystick_goal()
-            self.joy_linear_x = (
-                joy_msg.axes[constants.JOYSTICK_AXIS_LINEAR_X]
-                * constants.LINEAR_SCALE * 1.5)
-            self.joy_linear_y = (
-                joy_msg.axes[constants.JOYSTICK_AXIS_LINEAR_Y]
-                * constants.LINEAR_SCALE)
-            self.joy_angular_z = (
-                joy_msg.axes[constants.JOYSTICK_AXIS_ANGULAR_Z]
-                * constants.ANGULAR_SCALE)
-
-        if (len(joy_msg.buttons) > constants.BUTTON_RESET_HIDDEN_STATE and
-                joy_msg.buttons[constants.BUTTON_RESET_HIDDEN_STATE] == 1):
-            self.is_reset_hidden_state = True
-            rospy.logwarn('Force Reset hidden state')
-
-        self.joy_time = time.time()
-
-    def _generate_waypoint_using_joystick(self, linear_x, linear_y, linear_z):
-        if self.robot_pos_w is None or self.robot_orientation_w is None:
-            return
-
-        goal_offset_robot = np.array([
-            linear_x * constants.SMART_JOYSTICK_SCALE,
-            linear_y * constants.SMART_JOYSTICK_SCALE,
-            linear_z * constants.SMART_JOYSTICK_SCALE * constants.SMART_JOYSTICK_Z_SCALE,
-        ], dtype=np.float32)
-
-        robot_ori = np.array(self.robot_orientation_w, dtype=np.float32)
-        robot_yaw_ori = yaw_quat(robot_ori)
-
-        goal_offset_world = transform_points(
-            goal_offset_robot[np.newaxis],
-            np.zeros(3, dtype=np.float32)[np.newaxis],
-            robot_yaw_ori[np.newaxis],
-        )[0]
-
-        target_goal_world = [
-            self.robot_pos_w[0] + goal_offset_world[0].item(),
-            self.robot_pos_w[1] + goal_offset_world[1].item(),
-            self.robot_pos_w[2] + goal_offset_world[2].item(),
-        ]
-
-        if self.prev_smart_joystick_goal == [0.0, 0.0, 0.0]:
-            self.smart_joystick_goal = target_goal_world
-        else:
-            alpha = constants.SMART_JOYSTICK_FILTER_ALPHA
-            self.smart_joystick_goal = [
-                alpha * target_goal_world[0] + (1 - alpha) * self.prev_smart_joystick_goal[0],
-                alpha * target_goal_world[1] + (1 - alpha) * self.prev_smart_joystick_goal[1],
-                alpha * target_goal_world[2] + (1 - alpha) * self.prev_smart_joystick_goal[2],
-            ]
-        self.prev_smart_joystick_goal = list(self.smart_joystick_goal)
-
-    def _publish_smart_joystick_goal(self):
-        if self.robot_pos_w is None or self.robot_orientation_w is None:
-            rospy.logwarn_throttle(
-                5.0, 'Cannot publish smart joystick goal: robot pose not available')
-            return
-        self._publish_goal(self.smart_joystick_goal)
-
-    def _reset_smart_joystick_goal(self):
-        self.smart_joystick_goal = [0.0, 0.0, 0.0]
-        self.prev_smart_joystick_goal = [0.0, 0.0, 0.0]
-
-    @staticmethod
-    def _moving_xyz_with_buttons(joy_msg, scale=1.0):
-        def b(idx):
-            return bool(joy_msg.buttons[idx]) if idx < len(joy_msg.buttons) else False
-
-        dx = scale * (b(constants.BUTTON_FORWARD) - b(constants.BUTTON_BACKWARD))
-        dy = scale * (b(constants.BUTTON_LEFT) - b(constants.BUTTON_RIGHT))
-        dz = (scale / 5.0) * (b(constants.BUTTON_UP) - b(constants.BUTTON_DOWN))
-        return dx, dy, dz
-
-    # =====================================================================
-    # Goal publishing
-    # =====================================================================
-    def _publish_goal(self, goal_pos):
-        goal_pose = PoseStamped()
-        goal_pose.header = Header()
-        goal_pose.header.stamp = rospy.Time.from_sec(self.robot_odom_time)
-        goal_pose.header.frame_id = self.map_frame_id if self.map_frame_id else 'odom'
-        goal_pose.pose.position.x = float(goal_pos[0])
-        goal_pose.pose.position.y = float(goal_pos[1])
-        goal_pose.pose.position.z = float(goal_pos[2])
-        goal_pose.pose.orientation.w = 1.0
-        self.goal_pose_publisher.publish(goal_pose)
-
-    def _publish_moving_goal(self):
-        if self.robot_pos_w is None or self.robot_orientation_w is None:
-            rospy.logwarn('Cannot publish moving goal: robot pose/orientation not yet set.')
-            return
-
-        robot_pos = np.array(self.robot_pos_w, dtype=np.float32)
-        robot_ori = np.array(self.robot_orientation_w, dtype=np.float32)
-        robot_yaw_ori = yaw_quat(robot_ori)
-
-        moving_goal_pos = np.array(self.moving_goal_delta, dtype=np.float32)
-        moving_goal_pos_w = transform_points(
-            moving_goal_pos[np.newaxis],
-            robot_pos[np.newaxis],
-            robot_yaw_ori[np.newaxis],
-        )
-
-        self._publish_goal(moving_goal_pos_w[0].tolist())
-        self._reset_moving_goal()
-
-    # =====================================================================
     # Timer callbacks
     # =====================================================================
-    def _timer_publish_recorded_waypoints(self, _event):
-        self.publish_recorded_waypoints()
-
     def _timer_publish_target_vector(self, _event):
         self.publish_target_vector()
-
-    def _timer_update_smart_joystick_goal(self, _event):
-        self.update_smart_joystick_goal()
-
-    def publish_recorded_waypoints(self):
-        if self.robot_pos_w is None:
-            return
-
-        self.visualization_manager.publish_waypoints_marker(
-            self.waypoint_manager.waypoints_visualization,
-            self.map_frame_id,
-            self.recorded_waypoints_marker_pub,
-        )
-
-        if (self.waypoint_manager.is_home_sequence_active()
-                and self.waypoint_manager.has_home_waypoints()):
-            if (self.target_pos_w is None
-                    or self._check_near_goal(self.target_pos_w, self.robot_pos_w)):
-                next_wp = self.waypoint_manager.get_next_waypoint_home()
-                rospy.loginfo('Publishing next waypoint: {}'.format(next_wp))
-                self._publish_goal(next_wp)
-            else:
-                rospy.loginfo_throttle(1.0, 'Tracking the current waypoint ...')
-
-            if not self.waypoint_manager.has_home_waypoints():
-                self.waypoint_manager.stop_home_waypoint_sequence()
-
-        if (self.waypoint_manager.is_inversed_sequence_active()
-                and self.waypoint_manager.has_inversed_waypoints()):
-            if (self.target_pos_w is None
-                    or self._check_near_goal(self.target_pos_w, self.robot_pos_w)):
-                next_wp = self.waypoint_manager.get_next_waypoint_inversed()
-                rospy.loginfo('Publishing next inversed waypoint: {}'.format(next_wp))
-                self._publish_goal(next_wp)
-            else:
-                rospy.loginfo_throttle(1.0, 'Tracking the current waypoint ...')
-
-            if not self.waypoint_manager.has_inversed_waypoints():
-                self.waypoint_manager.stop_inversed_waypoint_sequence()
-
-        self.waypoint_manager.reset_visualization_if_complete()
 
     def publish_target_vector(self):
         if self.robot_pos_w is None or self.robot_orientation_w is None:
@@ -642,29 +330,9 @@ class NavigationPolicyNode(object):
             self.goal_vector_marker_publisher,
         )
 
-    def update_smart_joystick_goal(self):
-        if not self.smart_joystick_mode_active:
-            return
-        self._generate_waypoint_using_joystick(
-            self.latest_joystick_axes[0],
-            self.latest_joystick_axes[1],
-            self.latest_joystick_axes[2],
-        )
-        self._publish_smart_joystick_goal()
-
     # =====================================================================
     # Goal callbacks & checks
     # =====================================================================
-    def _check_near_goal(self, target_pos_w, robot_pos_w):
-        if target_pos_w is None or robot_pos_w is None:
-            return True
-        dist = np.linalg.norm(np.array(target_pos_w[:2]) - np.array(robot_pos_w[:2]))
-        threshold = self.arrive_goal_threshold * constants.NEAR_GOAL_THRESHOLD_MULTIPLIER
-        if dist > threshold:
-            return False
-        rospy.loginfo('Near the current goal position.')
-        return True
-
     def _check_goal_reached(self, target_pos_w, robot_pos_w):
         if target_pos_w is None or robot_pos_w is None:
             return True
@@ -717,12 +385,3 @@ class NavigationPolicyNode(object):
     def _reset_last_action(self):
         self.prev_cmd = np.zeros(3)
         return [0.0, 0.0, 0.0]
-
-    def _reset_joystick(self):
-        self.joy_linear_x = 0.0
-        self.joy_linear_y = 0.0
-        self.joy_angular_z = 0.0
-
-    def _reset_moving_goal(self):
-        self.moving_goal_delta = [0.0, 0.0, 0.0]
-        rospy.loginfo('Reset moving goal delta.')

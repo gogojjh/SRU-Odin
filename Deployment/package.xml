@@ -5,7 +5,7 @@
   <description>
     ROS1 (Noetic) port of the SRU Navigation controller for Unitree Go2 + Odin1.
     Loads the pretrained SRU policy (ONNX) and VAE depth encoder, subscribes to
-    Odin1 depth/odom and a joystick, publishes /cmd_vel to Go2.
+    Odin1 depth/odom, publishes /cmd_vel to Go2.
   </description>
 
   <maintainer email="user@example.com">SRU Navigation Port</maintainer>
@@ -21,8 +21,6 @@
   <depend>visualization_msgs</depend>
   <depend>cv_bridge</depend>
   <depend>tf2_ros</depend>
-
-  <exec_depend>joy</exec_depend>
 
   <export>
   </export>

@@ -361,7 +361,6 @@ recurrent actor can be validated independently:
 | ------------------------------ | -------------------------- | --------- | ------------------------------------ |
 | `/odin1/depth_img_competetion` | `sensor_msgs/Image`        | in        | dense float32 depth, meters, ~10 Hz  |
 | `/odin1/odometry_highfreq`     | `nav_msgs/Odometry`        | in        | odom frame, ~400 Hz (IMU rate)       |
-| `/joy`                         | `sensor_msgs/Joy`          | in        | Unitree remote control input         |
 | `/goal_pose`                   | `geometry_msgs/PoseStamped`| in / out  | goal; `frame_id` must equal odom frame|
 | `/cmd_vel`                     | `geometry_msgs/Twist`      | out       | body-frame velocity command          |
 
@@ -417,11 +416,11 @@ rosrun unitree_control unitree_vel_controller __name:=vel_to_sdk
 
 ```bash
 cd $CATKIN_WS/src/sru_nav_go2_ros1
-bash scripts/launch_sru_nav.sh require_joystick:=false
+bash scripts/launch_sru_nav.sh
 ```
 
-Setting `require_joystick:=false` stops the Unitree remote control from constantly
-broadcasting zero-velocity commands.
+The node does not handle a joystick. Joystick teleop (release-to-stop deadman) lives in the
+robohike repo's `go2_joy_teleop` package (quadruped_workbench/go2_software/ros1/go2_joy_teleop).
 
 Send a goal (in the odom frame) and watch `/cmd_vel`:
 
@@ -444,7 +443,6 @@ Edit `Deployment/config/sru_nav.yaml` — the only file you normally touch:
 | `policy_scale`      | `[0.6, 0.3, 0.6]`    | `[vx_max, vy_max, ωz_max]`; raise gradually         |
 | `min_depth`/`max_depth` | `0.25` / `10.0`  | depth clip range (meters)                           |
 | `use_sim`           | `false`              | `true` = odom twist already in base frame           |
-| `require_joystick`  | `true`               | `false` stops the remote from broadcasting zero-velocity locks (TESTING ONLY) |
 
 ### 8.6 Camera Mounting
 
@@ -463,7 +461,7 @@ roslaunch sru_nav_go2 sru_nav_go2.launch odin1_x:=0.28 odin1_z:=0.154 odin1_pitc
 
 | # | Problem | Solution |
 | - | ------- | -------- |
-| 1 | **`/cmd_vel` is all zeros.** Node logs "ready" but the robot never moves. | The Unitree remote control is holding the robot stationary with zero-velocity commands. On jack stands / sim, launch with `require_joystick:=false`. |
+| 1 | **`/cmd_vel` is all zeros.** Node logs "ready" but the robot never moves. | No goal received, or the goal was rejected: check that a goal is published on `goal_topic` and its `frame_id` equals the odom frame. (This node no longer handles a joystick; see `go2_joy_teleop` in the robohike repo.) |
 | 2 | **`ModuleNotFoundError: netifaces` / crash on first subscriber.** Node reaches "ready" then dies the moment a topic connects. | `netifaces` / `defusedxml` are missing in the conda env. `pip install netifaces defusedxml` (already built into `setup_conda_env.sh`). |
 | 3 | **`libp11-kit.so.0: undefined symbol: ffi_type_pointer`.** | Conda's libffi clashes with system `cv_bridge`. Launch via `launch_sru_nav.sh` — the launch script handles this automatically. |
 | 4 | **Node shebang points to `/usr/bin/python3`; ONNX import fails.** | `catkin_make` was run outside the conda env. `conda activate sru_go2 && cd $CATKIN_WS && catkin_make clean && catkin_make -DPYTHON_EXECUTABLE=$(which python)`. |

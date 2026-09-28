@@ -5,7 +5,6 @@
 depth_topic:    "/odin1/depth_img_competetion"   # sensor_msgs/Image (32FC1, meters)
 odom_topic:     "/odin1/odometry_highfreq"       # nav_msgs/Odometry @ ~400 Hz (IMU rate), header.frame_id=odom, child_frame_id=imu (实测)
                                                  #   alt: /odin1/odometry @ ~10 Hz (SLAM rate, less drift but laggier)
-joy_topic:      "/joy"                           # sensor_msgs/Joy (PS5-like layout)
 goal_topic:     "/goal_pose"                     # geometry_msgs/PoseStamped
 cmd_vel_topic:  "/cmd_vel"                       # geometry_msgs/Twist (consumed by Go2 sport mode)
 
@@ -59,12 +58,3 @@ reset_hidden_on_goal_jump: false
 # ---- Sim flag -------------------------------------------------------------
 # When true the odom twist is treated as already in the base frame.
 use_sim: false
-
-# ---- Joystick deadman -----------------------------------------------------
-# true  (default, SAFE): /cmd_vel stays 0 until a /joy publisher exists AND
-#                        axes[4] (throttle trigger) is pushed; 15 s without
-#                        /joy forces a stop. Use this on real hardware.
-# false (TESTING ONLY) : skip the deadman; cmd_vel_ratio starts at 1.0 and
-#                        the timeout check is disabled. Useful for headless
-#                        / autonomous closed-loop tests with no operator.
-require_joystick: true

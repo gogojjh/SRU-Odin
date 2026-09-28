@@ -9,8 +9,6 @@
   <!-- Top-level arguments                                              -->
   <!-- ============================================================== -->
   <arg name="sim"               default="false" doc="Treat odom twist as already in base frame."/>
-  <arg name="launch_joy"        default="true"  doc="Start a joy node alongside (PS5/PS4 etc.)."/>
-  <arg name="require_joystick"  default="true"  doc="If false, bypass the joystick deadman (TESTING ONLY)."/>
 
   <!-- 目标点/速度指令话题名，默认跟 config/sru_nav.yaml 里写的一样（独立跑
        纯 SRU 导航、直接控制 /cmd_vel 时用默认值）。给 SnowNav 当底座时必须
@@ -57,14 +55,6 @@
   <arg name="odin_pitch" default="-0.012462"/>
 
   <!-- ============================================================== -->
-  <!-- Optional joy node                                                -->
-  <!-- ============================================================== -->
-  <node if="$(arg launch_joy)" pkg="joy" type="joy_node" name="joy_node" output="screen">
-    <param name="autorepeat_rate" value="50.0"/>
-    <param name="deadzone"        value="0.05"/>
-  </node>
-
-  <!-- ============================================================== -->
   <!-- 外参 TF 两条。static_transform_publisher 的角度参数顺序是          -->
   <!-- x y z yaw pitch roll。                                            -->
   <!--                                                                  -->
@@ -104,7 +94,6 @@
         output="screen" required="true" launch-prefix="$(arg python_bin)">
     <rosparam command="load" file="$(find sru_nav_go2_ros1)/config/sru_nav.yaml"/>
     <param name="use_sim"          value="$(arg sim)"/>
-    <param name="require_joystick" value="$(arg require_joystick)"/>
     <!-- 放在 rosparam load 之后才能盖住 yaml 里写死的 /goal_pose、/cmd_vel -->
     <param name="goal_topic"       value="$(arg goal_topic)"/>
     <param name="cmd_vel_topic"    value="$(arg cmd_vel_topic)"/>

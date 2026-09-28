@@ -35,7 +35,7 @@ sru_nav_go2_ros1/
 ├── setup.py
 ├── README.md
 ├── config/sru_nav.yaml             # all runtime parameters
-├── launch/sru_nav_go2.launch       # joy + static TF + main node
+├── launch/sru_nav_go2.launch       # static TF + main node
 ├── models/                         # symlinks to deployment_policies/
 │   ├── vae_encoder.onnx -> ../../sru-robot-deployment/.../vae_encoder.onnx
 │   └── nav_policy.onnx  -> ../../sru-robot-deployment/.../nav_policy.onnx
@@ -45,7 +45,6 @@ sru_nav_go2_ros1/
     ├── utils.py                    # quaternion/transform helpers (pure numpy)
     ├── model.py                    # ONNX runtime wrapper (LearningModel)
     ├── visualization.py            # rviz Marker helpers
-    ├── waypoint_manager.py
     └── navigation_policy_node.py   # ported NavigationPolicyNode (rospy)
 ```
 
@@ -80,7 +79,7 @@ roslaunch odin_ros_driver odin1_ros.launch
 # 2) Bring up your Go2 cmd_vel bridge (subscribes to /cmd_vel, drives sport mode)
 #    (Your existing setup.)
 
-# 3) Launch the SRU navigation node + joy
+# 3) Launch the SRU navigation node
 roslaunch sru_nav_go2_ros1 sru_nav_go2.launch
 
 # 4) Send a goal (in odom frame)
@@ -111,10 +110,8 @@ height, downward pitch) for correct depth-to-body alignment.
 
 ## Safety
 
-The joystick acts as a deadman switch. The robot will not move until you
-push the throttle axis (axis 4, default scale `1.0 + axis[4]`) above 0.
-After `JOYSTICK_TIMEOUT` (15 s) without a joy message the controller
-clamps the cmd_vel ratio to zero.
+This node does not handle a joystick. Joystick teleop / deadman lives in the
+robohike repo's `go2_joy_teleop` package.
 
 ## Known caveats vs. the original deployment
 

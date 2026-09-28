@@ -82,6 +82,9 @@
 
 ### 3.4 安全：手柄 deadman 双模
 
+> 手柄逻辑已移出本仓库，见 robohike 仓库的 `go2_joy_teleop` 包
+> （quadruped_workbench/go2_software/ros1/go2_joy_teleop）。以下为历史记录，不代表当前实现。
+
 | 模式 | 触发 | 行为 |
 |---|---|---|
 | 默认 (`require_joystick=true`) | 实机部署 | `cmd_vel_ratio=0`，必须 `/joy` 持续发布且 `axes[4]` 推到正才有速度；`>15 s` 无 joy → 强制归零 |

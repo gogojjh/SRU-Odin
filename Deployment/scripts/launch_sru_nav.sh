@@ -14,12 +14,10 @@
 #      can still import rospy / cv_bridge / sensor_msgs / etc.
 #
 # Usage:
-#   bash launch_sru_nav.sh                # full launch (joy + static TF + node)
-#   bash launch_sru_nav.sh --no-joy       # if /joy is already provided elsewhere
-#   bash launch_sru_nav.sh --no-deadman   # TESTING: skip joystick deadman entirely
-#                                         # (cmd_vel_ratio=1.0, no /joy needed).
-#                                         # Robot WILL move on /goal_pose alone.
-#   bash launch_sru_nav.sh --node-only    # run just sru_nav_node (assume joy + TF already up)
+#   bash launch_sru_nav.sh                # full launch (static TF + node)
+#   bash launch_sru_nav.sh --node-only    # run just sru_nav_node (assume TF already up)
+# 本节点不处理手柄；手柄遥控见 robohike 仓库的 go2_joy_teleop 包
+# (quadruped_workbench/go2_software/ros1/go2_joy_teleop)。
 # -----------------------------------------------------------------------------
 
 set -eu
@@ -32,8 +30,6 @@ EXTRA_ARGS=""
 NODE_ONLY=0
 for arg in "$@"; do
   case "$arg" in
-    --no-joy)         EXTRA_ARGS="$EXTRA_ARGS launch_joy:=false" ;;
-    --no-deadman)     EXTRA_ARGS="$EXTRA_ARGS require_joystick:=false launch_joy:=false" ;;
     --node-only)      NODE_ONLY=1 ;;
     *) EXTRA_ARGS="$EXTRA_ARGS $arg" ;;
   esac

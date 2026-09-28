@@ -113,19 +113,13 @@ export ROS_HOSTNAME=localhost
 export ROS_IP=127.0.0.1
 cd src/sru_nav_go2_ros1
 bash scripts/launch_sru_nav.sh  
-# require_joystick=true，必须接手柄，axes[4] 推油门，15 s 看护
-
-bash scripts/launch_sru_nav.sh --no-deadman
-# require_joystick=false，cmd_vel_ratio 直接 1.0
 # 发一个 /goal_pose，policy 就会驱动 /cmd_vel
 ```
 
 `launch_sru_nav.sh` 自动做：source ROS → source catkin_ws → conda activate sru_nav → 把 `/opt/ros/noetic/lib/python3/dist-packages` 注入 `PYTHONPATH` → `roslaunch sru_nav_go2_ros1 sru_nav_go2.launch`。
 
-如果手柄 `/joy` 已经在别处启动：
-```bash
-bash scripts/launch_sru_nav.sh --no-joy
-```
+本节点不处理手柄；手柄遥控见 robohike 仓库的 `go2_joy_teleop` 包
+（quadruped_workbench/go2_software/ros1/go2_joy_teleop）。
 
 如果不需要静态 TF（你自己发了 `base_link → odin1_base_link`）：
 ```bash
@@ -256,7 +250,7 @@ print('twist_lin (sample):', twist_lin[100])
 | conda 报 `Unexpected error writing token file ... aau_token_host` | anaconda.org 遥测 bug，无害。脚本里 `export ANACONDA_ANON_USAGE=false` 已静音。 |
 | pip 太慢 / 拉不动 | `setup_conda_env.sh` 默认走清华源；若要换 `PIP_INDEX_URL=... bash scripts/setup_conda_env.sh`。 |
 | 节点启动后 `Odometry not ready, skipping depth callback.` | `rostopic hz /odin1/odometry_highfreq` 是否在跑？frame_id 是否正确？ |
-| `/cmd_vel` 全是 0 | 手柄 deadman——`axes[4]` 必须推过 0；或 15 s 超时。看 `cmd_vel_ratio` 日志。 |
+| `/cmd_vel` 全是 0 | 本节点不处理手柄；查目标点是否已发到 `/goal_pose`、`frame_id` 是否对得上。 |
 | Twist 数值剧烈震荡 | 1) `policy_scale` 太大；2) odom twist 坐标系判错（world↔body 弄反）；3) depth NaN 没被过滤 |
 | `cv_bridge` import 失败 | conda env 必须是 python 3.8；并且 `PYTHONPATH` 已包含 `/opt/ros/noetic/lib/python3/dist-packages` |
 | 推理速度跟不上 5 Hz | `rostopic hz /cmd_vel`；用 `nvtop`/`top` 看 NX 满载情况；考虑装 JetPack onnxruntime-gpu wheel |
