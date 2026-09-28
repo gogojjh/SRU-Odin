@@ -11,15 +11,15 @@
   <arg name="sim"               default="false" doc="Treat odom twist as already in base frame."/>
 
   <!-- 目标点/速度指令话题名，默认跟 config/sru_nav.yaml 里写的一样（独立跑
-       纯 SRU 导航、直接控制 /cmd_vel 时用默认值）。给 SnowNav 当底座时必须
+       纯 SRU 导航、直接控制 /cmd_vel 时用默认值）。给 MarvisNav 当底座时必须
        显式传 goal_topic:=/sru/goal_pose cmd_vel_topic:=/sru/cmd_vel，否则
-       SRU 会抢占默认的 /cmd_vel（SnowNav 执行器 snownav_go2_executor.py
+       SRU 会抢占默认的 /cmd_vel（MarvisNav 执行器 snownav_go2_executor.py(已删的旧执行器)
        要独占 /cmd_vel 的发布权，自己决定何时采纳 SRU 算出的速度），两边
        话题对不上，表现为狗原地打转、几乎不产生位移，且不报任何错误。 -->
   <arg name="goal_topic"        default="/goal_pose"/>
   <arg name="cmd_vel_topic"     default="/cmd_vel"/>
   <!-- 里程计话题。默认吃驱动原生的 odom 系那一路（单独跑纯 SRU 导航时用它）。
-       跟 SnowNav 集成时要换成 /habitat/odom_highfreq —— 那是桥接把同一份 400 Hz
+       跟 MarvisNav 集成时要换成 /habitat/odom_highfreq —— 那是桥接把同一份 400 Hz
        数据换算到 world 系后转发的。sru_nav_node 拿 odom 消息的 header.frame_id
        当自己的地图系，而 C++ 发的目标点是 world 系的，两边必须是同一个系；
        混用的话目标点会系统性偏一个安装外参（15.8 厘米）且不报错。 -->

@@ -38,7 +38,7 @@ low_pass_filter_coef: [0.5, 0.5, 0.5]            # 一阶低通: 新=a*本次+(1
 arrive_goal_threshold: 0.25                      # meters，到点判定阈值
 # 配合真机侧单步动作幅度(转45°/走0.5米，见 deploy_go2.launch 的
 # fsm/action_distance、fsm/action_angle_deg)。_check_near_goal 的"接近判定"
-# 阈值是本值的2倍，跟着联动到0.5米。lookahead(snownav_go2_executor.py，
+# 阈值是本值的2倍，跟着联动到0.5米。lookahead(snownav_go2_executor.py(已删的旧执行器)，
 # 2.5米)不用跟着调：阈值变小后安全余量(2.5m目标点 vs 0.25m判定圈)反而更大。
 
 # ---- 目标点跳变时是否重置 LSTM 隐状态 -------------------------------------
