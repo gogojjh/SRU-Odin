@@ -112,7 +112,6 @@ req_files=(
   "src/sru_nav_go2/model.py"
   "src/sru_nav_go2/utils.py"
   "src/sru_nav_go2/visualization.py"
-  "src/sru_nav_go2/waypoint_manager.py"
   "src/sru_nav_go2/navigation_policy_node.py"
   "models/vae_encoder.onnx"
   "models/nav_policy.onnx"
